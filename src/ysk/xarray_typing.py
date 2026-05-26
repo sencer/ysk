@@ -42,6 +42,15 @@ class _DatasetSwapDims(Protocol):
   ) -> xr.Dataset: ...
 
 
+class _DatasetSetXindex(Protocol):
+  def set_xindex(
+    self,
+    coord_names: object,
+    index_cls: object = None,
+    **options: object,
+  ) -> xr.Dataset: ...
+
+
 class _OpenZarr(Protocol):
   def __call__(
     self,
@@ -176,6 +185,20 @@ def swap_dims(dataset: xr.Dataset, dims: object) -> xr.Dataset:
   """
 
   return cast("_DatasetSwapDims", dataset).swap_dims(dims)
+
+
+def set_xindex(dataset: xr.Dataset, coord_names: object) -> xr.Dataset:
+  """Set an xarray index with typed wrapper support.
+
+  Args:
+    dataset: Dataset to update.
+    coord_names: Coordinate name or names accepted by xarray.
+
+  Returns:
+    Dataset with the requested xarray index.
+  """
+
+  return cast("_DatasetSetXindex", dataset).set_xindex(coord_names)
 
 
 def to_netcdf(dataset: xr.Dataset, path: Path | str) -> None:

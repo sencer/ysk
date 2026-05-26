@@ -12,7 +12,7 @@ from turkiye import get_division
 from zarr.errors import GroupNotFoundError
 
 from ysk.schema import slugify
-from ysk.xarray_typing import open_zarr
+from ysk.xarray_typing import open_zarr, set_xindex
 
 if TYPE_CHECKING:
   import xarray as xr
@@ -165,7 +165,7 @@ def load_dataset(path: Path | str | None = None) -> xr.Dataset:
     The opened election result dataset.
   """
 
-  return open_zarr(_zarr_path(path))
+  return _with_selection_index(open_zarr(_zarr_path(path)))
 
 
 def load_demographics(path: Path | str | None = None) -> xr.Dataset | None:
@@ -183,6 +183,30 @@ def load_demographics(path: Path | str | None = None) -> xr.Dataset | None:
     return open_zarr(_zarr_path(path), group="demografi")
   except (FileNotFoundError, GroupNotFoundError):
     return None
+
+
+def _with_selection_index(dataset: xr.Dataset) -> xr.Dataset:
+  index_coords = [
+    name
+    for name in ("secim", "makam")
+    if name in dataset.coords and len(dataset[name].dims) == 1
+  ]
+  if not index_coords:
+    return dataset
+  if any(name in dataset.xindexes for name in index_coords):
+    return dataset
+  return set_xindex(dataset, index_coords)
+
+
+def _isel_1d_coordinate(
+  dataset: xr.Dataset,
+  coordinate: str,
+  mask: object,
+) -> xr.Dataset:
+  dim = dataset[coordinate].dims[0]
+  if not isinstance(mask, np.ndarray):
+    mask = cast("xr.DataArray", mask).to_numpy()
+  return dataset.isel({dim: mask})
 
 
 def election_results(  # noqa: PLR0913
@@ -228,7 +252,7 @@ def election_results(  # noqa: PLR0913
     ValueError: If ``level`` is unknown.
   """
 
-  dataset = load_dataset(path) if dataset is None else dataset
+  dataset = load_dataset(path) if dataset is None else _with_selection_index(dataset)
   dates = _as_list(election)
   offices = _office_list(office, dataset=dataset, dates=dates)
   choices = _normalize_choices(choices)
@@ -258,7 +282,7 @@ def election_results(  # noqa: PLR0913
 
   if level in {"satir", "sandik"}:
     if level == "sandik":
-      selected = selected.isel(yer_dim=(selected.yer_turu != "ilce").to_numpy())
+      selected = _isel_1d_coordinate(selected, "yer_turu", selected.yer_turu != "ilce")
     frame = _wide_rows(
       selected,
       choices=choices,
@@ -373,11 +397,12 @@ def _internal_column_name(column: str) -> str:
 
 
 def _select_province(dataset: xr.Dataset, province: str) -> xr.Dataset:
-  selected = dataset.sel(il=province)
-  if selected.sizes.get("yer_dim", 0) > 0:
-    return selected
-  msg = f"unknown province {province!r}"
-  raise ValueError(msg)
+  try:
+    selected = dataset if "il" in dataset.xindexes else set_xindex(dataset, "il")
+    return selected.sel(il=province)
+  except KeyError:
+    msg = f"unknown province {province!r}"
+    raise ValueError(msg) from None
 
 
 def _select_district(dataset: xr.Dataset, district: str) -> xr.Dataset:
@@ -386,7 +411,7 @@ def _select_district(dataset: xr.Dataset, district: str) -> xr.Dataset:
     _normalize_district_name
   )
   mask = names.eq(wanted) | names.str.endswith(f" - {wanted}", na=False)
-  return dataset.isel(yer_dim=mask.to_numpy())
+  return _isel_1d_coordinate(dataset, "ilce", mask.to_numpy())
 
 
 def _multi_election_results(  # noqa: PLR0913
@@ -523,7 +548,7 @@ def _wide_rows(
 
   votes = oy.to_pandas()
   votes.columns = choice_names
-  votes = votes.dropna(axis=1, how="all").fillna(0)
+  votes = votes.dropna(axis=1, how="all").fillna(0).reset_index(drop=True)
 
   meta = _metadata_frame(dataset, index=votes.index, columns=metadata_columns)
   frame = pd.concat([meta, votes], axis=1)
@@ -726,7 +751,7 @@ def _demographics_frame_from_group(
 
 def _demographics_frame_from_embedded(selected: xr.Dataset) -> pd.DataFrame:
   if "yer_turu" in selected:
-    selected = selected.isel(yer_dim=(selected.yer_turu == "ilce").to_numpy())
+    selected = _isel_1d_coordinate(selected, "yer_turu", selected.yer_turu == "ilce")
   columns = [
     column
     for column in ("secim", "il_id", "il", "ilce_id", "ilce")
