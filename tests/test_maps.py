@@ -170,6 +170,95 @@ def test_choices_accept_display_names() -> None:
   assert {"chp", "ak_parti"}.issubset(data.columns)
 
 
+def test_election_results_columns_filters_output_columns() -> None:
+  full = election_results(
+    Secim.YEREL_2024,
+    Makam.BUYUKSEHIR_BELEDIYE_BASKANI,
+    province="ISTANBUL",
+    level="ilce",
+  )
+  data = election_results(
+    Secim.YEREL_2024,
+    Makam.BUYUKSEHIR_BELEDIYE_BASKANI,
+    province="ISTANBUL",
+    level="ilce",
+    columns=["secmen", "CHP"],
+  )
+
+  assert list(data.columns) == ["secmen", "chp"]
+  assert (
+    data.loc[("ISTANBUL", "ADALAR"), "secmen"]
+    == full.loc[
+      ("ISTANBUL", "ADALAR"),
+      "secmen",
+    ]
+  )
+  assert (
+    data.loc[("ISTANBUL", "ADALAR"), "chp"]
+    == full.loc[
+      ("ISTANBUL", "ADALAR"),
+      "chp",
+    ]
+  )
+
+
+def test_election_results_columns_can_select_totals_only() -> None:
+  data = election_results(
+    Secim.YEREL_2024,
+    Makam.BUYUKSEHIR_BELEDIYE_BASKANI,
+    province="ISTANBUL",
+    level="ilce",
+    columns=["secmen"],
+  )
+
+  assert list(data.columns) == ["secmen"]
+
+
+def test_multi_election_results_columns_filters_inner_columns() -> None:
+  data = election_results(
+    [Secim.YEREL_2019, Secim.YEREL_2024],
+    Makam.BUYUKSEHIR_BELEDIYE_BASKANI,
+    province="ISTANBUL",
+    level="ilce",
+    columns=["secmen", "CHP"],
+  )
+
+  assert isinstance(data.columns, pd.MultiIndex)
+  assert set(data.columns.get_level_values("alan")) == {"secmen", "chp"}
+
+
+def test_multi_election_skips_missing_offices() -> None:
+  with pytest.warns(
+    UserWarning,
+    match="2015-06-07 secim doesn't have CB makam",
+  ):
+    data = election_results(
+      [Secim.GENEL_HAZIRAN_2015, Secim.GENEL_2023],
+      [Makam.MILLETVEKILI, Makam.CUMHURBASKANI],
+      province="ISTANBUL",
+      level="il",
+      columns=["secmen"],
+    )
+
+  assert isinstance(data.columns, pd.MultiIndex)
+  assert (str(Secim.GENEL_HAZIRAN_2015), "MV", "secmen") in data.columns
+  assert (str(Secim.GENEL_HAZIRAN_2015), "CB", "secmen") not in data.columns
+  assert (str(Secim.GENEL_2023), "CB", "secmen") in data.columns
+
+
+def test_makam_all_expands_to_available_offices() -> None:
+  data = election_results(
+    Secim.GENEL_2023,
+    Makam.ALL,
+    province="ISTANBUL",
+    level="il",
+    columns=["secmen"],
+  )
+
+  assert isinstance(data.columns, pd.MultiIndex)
+  assert {"CB", "MV"}.issubset(set(data.columns.get_level_values("makam")))
+
+
 def test_multi_election_can_align_historical_district_axes() -> None:
   current = election_results(
     Secim.YEREL_2024,

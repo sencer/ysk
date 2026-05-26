@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from enum import IntFlag, StrEnum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,7 @@ SecimTarihi = Secim
 class Makam(StrEnum):
   """Supported election offices or ballot types."""
 
+  ALL = "ALL"
   BELEDIYE_BASKANI = "BB"
   BUYUKSEHIR_BELEDIYE_BASKANI = "BBB"
   BELEDIYE_MECLISI = "BM"
@@ -193,6 +195,7 @@ def election_results(  # noqa: PLR0913
   province: str | None = None,
   district: str | None = None,
   choices: list[str] | None = None,
+  columns: Sequence[str] | None = None,
   align_historical_divisions: bool = False,
   demographics: xr.Dataset | None = None,
 ) -> pd.DataFrame:
@@ -211,6 +214,8 @@ def election_results(  # noqa: PLR0913
     province: Optional province filter.
     district: Optional district filter.
     choices: Optional choice names to include.
+    columns: Optional output column names to include. Vote-choice columns are
+      loaded selectively when possible.
     align_historical_divisions: Whether to align historical district results to
       the latest selected election year.
     demographics: Optional demographic dataset used for province or district
@@ -225,8 +230,11 @@ def election_results(  # noqa: PLR0913
 
   dataset = load_dataset(path) if dataset is None else dataset
   dates = _as_list(election)
-  offices = _as_list(office)
+  offices = _office_list(office, dataset=dataset, dates=dates)
   choices = _normalize_choices(choices)
+  columns = _normalize_columns(columns)
+  if choices is None:
+    choices = _choices_from_columns(columns)
   if demographics is None and level in {"ilce", "il"}:
     demographics = load_demographics(path)
   if len(dates) > 1 or len(offices) > 1:
@@ -238,6 +246,7 @@ def election_results(  # noqa: PLR0913
       province=province,
       district=district,
       choices=choices,
+      columns=columns,
       align_historical_divisions=align_historical_divisions,
       demographics=demographics,
     )
@@ -250,14 +259,27 @@ def election_results(  # noqa: PLR0913
   if level in {"satir", "sandik"}:
     if level == "sandik":
       selected = selected.isel(yer_dim=(selected.yer_turu != "ilce").to_numpy())
-    frame = _wide_rows(selected, choices=choices)
-    return _finalize_frame(_indexed(frame, level), dates=dates, offices=offices)
+    frame = _wide_rows(
+      selected,
+      choices=choices,
+      metadata_columns=_metadata_columns_for_level(level, columns=columns),
+    )
+    return _finalize_frame(
+      _indexed(frame, level),
+      dates=dates,
+      offices=offices,
+      columns=columns,
+    )
 
   if level not in GROUP_KEYS:
     msg = f"unknown level {level!r}"
     raise ValueError(msg)
   sandik = selected.sel(yer_turu="sandik")
-  frame = _wide_rows(sandik, choices=choices)
+  frame = _wide_rows(
+    sandik,
+    choices=choices,
+    metadata_columns=_metadata_columns_for_level(level, columns=columns),
+  )
   aggregated = _aggregate(frame, GROUP_KEYS[level])
   aggregated = _attach_demographics(
     aggregated,
@@ -266,13 +288,45 @@ def election_results(  # noqa: PLR0913
     dates=dates,
     level=level,
   )
-  return _finalize_frame(aggregated, dates=dates, offices=offices)
+  return _finalize_frame(
+    aggregated,
+    dates=dates,
+    offices=offices,
+    columns=columns,
+  )
 
 
 def _as_list(value: ScalarOrList) -> list[str]:
   if isinstance(value, str):
     return [str(value)]
   return [str(item) for item in value]
+
+
+def _office_list(
+  value: OfficeSelection | Sequence[OfficeSelection],
+  *,
+  dataset: xr.Dataset,
+  dates: Sequence[str],
+) -> list[str]:
+  offices = _as_list(value)
+  if not any(office.upper() == Makam.ALL for office in offices):
+    return offices
+  explicit = [office for office in offices if office.upper() != Makam.ALL]
+  available = _available_offices(dataset, dates=dates)
+  return list(dict.fromkeys([*explicit, *available]))
+
+
+def _available_offices(dataset: xr.Dataset, *, dates: Sequence[str]) -> list[str]:
+  offices: list[str] = []
+  for date in dates:
+    try:
+      selected = dataset.sel(secim=date)
+    except KeyError:
+      continue
+    if "makam" not in selected:
+      continue
+    offices.extend(str(office) for office in selected.makam.to_numpy())
+  return sorted(dict.fromkeys(offices))
 
 
 def _zarr_path(path: Path | str | None) -> Path:
@@ -294,6 +348,28 @@ def _normalize_choices(choices: list[str] | None) -> list[str] | None:
   if choices is None:
     return None
   return [slugify(choice) for choice in choices]
+
+
+def _normalize_columns(columns: Sequence[str] | None) -> list[str] | None:
+  if columns is None:
+    return None
+  return list(dict.fromkeys(slugify(column) for column in columns))
+
+
+def _choices_from_columns(columns: Sequence[str] | None) -> list[str] | None:
+  if columns is None:
+    return None
+  return [
+    column
+    for column in columns
+    if _internal_column_name(column) not in set(BASE_COLUMNS) | {"belde_adi"}
+    and column not in PUBLIC_TOTAL_COLUMNS
+  ]
+
+
+def _internal_column_name(column: str) -> str:
+  public_to_internal = {public: internal for internal, public in PUBLIC_RENAMES.items()}
+  return public_to_internal.get(column, column)
 
 
 def _select_province(dataset: xr.Dataset, province: str) -> xr.Dataset:
@@ -322,6 +398,7 @@ def _multi_election_results(  # noqa: PLR0913
   province: str | None,
   district: str | None,
   choices: list[str] | None,
+  columns: list[str] | None,
   align_historical_divisions: bool,
   demographics: xr.Dataset | None,
 ) -> pd.DataFrame:
@@ -330,6 +407,12 @@ def _multi_election_results(  # noqa: PLR0913
   alignment_year = _historical_alignment_year(dates)
   for date in dates:
     for office in offices:
+      if not _has_election_office(dataset, date=date, office=office):
+        warnings.warn(
+          f"{date} secim doesn't have {office} makam; skipping.",
+          stacklevel=2,
+        )
+        continue
       frame = election_results(
         date,
         office,
@@ -338,6 +421,7 @@ def _multi_election_results(  # noqa: PLR0913
         province=province,
         district=district,
         choices=choices,
+        columns=columns,
         demographics=demographics,
       )
       if align_historical_divisions:
@@ -355,6 +439,9 @@ def _multi_election_results(  # noqa: PLR0913
         frame = frame.drop(columns=drop_columns)
       frames.append(frame)
       keys.append((date, office))
+  if not frames:
+    msg = "no available election/office combinations found"
+    raise ValueError(msg)
   return (
     _squeeze_column_levels(
       pd.concat(
@@ -369,6 +456,14 @@ def _multi_election_results(  # noqa: PLR0913
     .sort_index(axis=0)
     .sort_index(axis=1)
   )
+
+
+def _has_election_office(dataset: xr.Dataset, *, date: str, office: str) -> bool:
+  try:
+    dataset.sel(secim=date).sel(makam=office)
+  except KeyError:
+    return False
+  return True
 
 
 def _historical_alignment_year(dates: Sequence[str]) -> int:
@@ -407,7 +502,12 @@ def _align_administrative_divisions(
   return reset.groupby(group_keys, dropna=False).agg(aggregations).sort_index()
 
 
-def _wide_rows(dataset: xr.Dataset, *, choices: list[str] | None) -> pd.DataFrame:
+def _wide_rows(
+  dataset: xr.Dataset,
+  *,
+  choices: list[str] | None,
+  metadata_columns: Sequence[str],
+) -> pd.DataFrame:
   oy = dataset.oy
   choice_names = dataset.tercih.to_numpy()
   if choices is not None:
@@ -425,14 +525,35 @@ def _wide_rows(dataset: xr.Dataset, *, choices: list[str] | None) -> pd.DataFram
   votes.columns = choice_names
   votes = votes.dropna(axis=1, how="all").fillna(0)
 
-  meta = _metadata_frame(dataset, index=votes.index)
+  meta = _metadata_frame(dataset, index=votes.index, columns=metadata_columns)
   frame = pd.concat([meta, votes], axis=1)
   return _clean_locations(frame)
 
 
-def _metadata_frame(dataset: xr.Dataset, *, index: pd.Index) -> pd.DataFrame:
+def _metadata_columns_for_level(
+  level: ResultLevel,
+  *,
+  columns: Sequence[str] | None,
+) -> list[str]:
+  if columns is None:
+    return BASE_COLUMNS
+  wanted = {_internal_column_name(column) for column in columns}
+  if level in {"satir", "sandik"}:
+    wanted.update(["il", "ilce", "belde_adi", "mahalle", "sandik_no"])
+  elif level in GROUP_KEYS:
+    wanted.update(GROUP_KEYS[level])
+  wanted.update(column for column in TOTAL_COLUMNS if column in wanted)
+  return [column for column in [*BASE_COLUMNS, "belde_adi"] if column in wanted]
+
+
+def _metadata_frame(
+  dataset: xr.Dataset,
+  *,
+  index: pd.Index,
+  columns: Sequence[str],
+) -> pd.DataFrame:
   data: dict[str, object] = {}
-  for column in BASE_COLUMNS:
+  for column in columns:
     if column in dataset:
       data[column] = dataset[column].to_numpy()
   return pd.DataFrame(data, index=index)
@@ -589,7 +710,7 @@ def _demographics_frame_from_group(
     election_mask = selected["secim"].isin(list(dates))
     mask = election_mask if mask is None else mask & election_mask
   if mask is not None:
-    selected = selected.isel(demografi=mask.compute())
+    selected = selected.isel(demografi=mask.to_numpy())
   columns = [
     column
     for column in ("secim", "il_id", "il", "ilce_id", "ilce")
@@ -645,6 +766,7 @@ def _finalize_frame(
   *,
   dates: list[str],
   offices: list[str],
+  columns: Sequence[str] | None = None,
 ) -> pd.DataFrame:
   result = frame.rename(columns=PUBLIC_RENAMES)
   drop_columns = [
@@ -659,6 +781,8 @@ def _finalize_frame(
   if drop_columns:
     result = result.drop(columns=drop_columns)
   result = result[_sorted_columns(result)]
+  if columns is not None:
+    result = result.loc[:, [column for column in result.columns if column in columns]]
   result = _clean_index(result, dates=dates, offices=offices)
   return result.sort_index(axis=0)
 
