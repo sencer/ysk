@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ysk"
-version = "0.1.2"
+version = "0.1.3"
 description = "Tools for loading and analyzing cleaned Turkish YSK election data"
 authors = [{ name = "Sencer S.", email = "nospam@gmail.com" }]
 license = "MIT"
@@ -15,7 +15,6 @@ dependencies = [
   "numpy>=2.0.0",
   "pandas>=2.0.0",
   "pyarrow>=18.0.0",
-  "turkiye",
   "xarray>=2025.1.0",
   "zarr>=3.0.0",
 ]
@@ -27,6 +26,16 @@ dev = [
   "pytest>=7.0.0",
   "pytest-cov>=4.0.0",
   "ruff>=0.1.0",
+  "turkiye",
+]
+cografya = [
+  "turkiye",
+]
+harita = [
+  "turkiye",
+]
+all = [
+  "turkiye",
 ]
 notebook = [
   "jupyter>=1.0.0",

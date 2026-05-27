@@ -8,6 +8,27 @@ Temizlenmis YSK secim sonuclari verisi.
 pip install ysk
 ```
 
+Varsayilan kurulum yalnizca veri okuma ve tablo uretme bagimliliklarini kurar.
+Tarihsel ilce hizalama icin cografya bagimliligini ekleyin:
+
+```bash
+pip install "ysk[cografya]"
+```
+
+Harita cizimi icin harita bagimliligini ekleyin:
+
+```bash
+pip install "ysk[harita]"
+```
+
+Tum opsiyonel bagimliliklari birlikte kurmak icin:
+
+```bash
+pip install "ysk[cografya,harita]"
+# veya
+pip install "ysk[all]"
+```
+
 ## İçerik
 
 Bu repo, `src/ysk/data/secim.zarr` altinda tek bir xarray/zarr veri seti olarak
@@ -28,7 +49,7 @@ src/ysk/data/secim.zarr
 
 ## Örnek
 
-Harita sinirlari ve cizim yardimcilari `turkiye` paketinden gelir:
+Harita sinirlari ve cizim yardimcilari opsiyonel `turkiye` paketinden gelir:
 
 ```python
 import turkiye
@@ -170,6 +191,7 @@ temizlenerek ilce ve belde bilgisi ayrilir.
 Birden fazla secimi karsilastirirken, sonradan ilce olan yerleri eski idari
 sinirlara toplamak icin `align_historical_divisions=True` argumanini
 kullanabilirsiniz. Bu secenek yalnizca `level="ilce"` sonuclarinda etkilidir:
+`turkiye` gerektirir; gerekirse `pip install "ysk[cografya]"` ile kurun.
 
 ```python
 df = election_results(

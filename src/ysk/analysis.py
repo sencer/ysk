@@ -8,7 +8,6 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from turkiye import get_division
 from zarr.errors import GroupNotFoundError
 
 from ysk.schema import slugify
@@ -495,6 +494,23 @@ def _historical_alignment_year(dates: Sequence[str]) -> int:
   return min(int(date[:4]) for date in dates)
 
 
+def _aligned_division_key(
+  *, province: str, district: str, year: int
+) -> tuple[str, ...]:
+  try:
+    from turkiye import get_division  # noqa: PLC0415
+  except ImportError as exc:
+    msg = (
+      "align_historical_divisions=True requires the optional geography/plotting "
+      "dependency; install ysk[cografya]."
+    )
+    raise ImportError(msg) from exc
+  division = get_division(il=province, ilce=district, year=year)
+  if division.geometry_level != "ilce" or len(division.geometry_key) < 2:
+    return ()
+  return tuple(str(part) for part in division.geometry_key[:2])
+
+
 def _align_administrative_divisions(
   frame: pd.DataFrame,
   *,
@@ -508,10 +524,14 @@ def _align_administrative_divisions(
   reset = frame.reset_index()
   changed = False
   for index, row in reset[["il", "ilce"]].iterrows():
-    division = get_division(il=row["il"], ilce=row["ilce"], year=target_year)
-    if division.geometry_level != "ilce" or len(division.geometry_key) < 2:
+    aligned_key = _aligned_division_key(
+      province=str(row["il"]),
+      district=str(row["ilce"]),
+      year=target_year,
+    )
+    if len(aligned_key) < 2:
       continue
-    aligned_il, aligned_ilce = division.geometry_key[:2]
+    aligned_il, aligned_ilce = aligned_key
     if row["il"] != aligned_il or row["ilce"] != aligned_ilce:
       reset.loc[index, "il"] = aligned_il
       reset.loc[index, "ilce"] = aligned_ilce
