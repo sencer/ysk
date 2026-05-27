@@ -279,6 +279,11 @@ def election_results(  # noqa: PLR0913
       demographics=demographics,
     )
   selected = dataset.sel(secim=dates[0]).sel(makam=offices[0])
+  available_choices = (
+    _available_vote_choices(selected)
+    if choices is None and (province or district)
+    else None
+  )
   if province is not None:
     selected = _select_province(selected, province)
   if district is not None:
@@ -290,6 +295,7 @@ def election_results(  # noqa: PLR0913
     frame = _wide_rows(
       selected,
       choices=choices,
+      available_choices=available_choices,
       metadata_columns=_metadata_columns_for_level(level, columns=columns),
     )
     return _finalize_frame(
@@ -306,6 +312,7 @@ def election_results(  # noqa: PLR0913
   frame = _wide_rows(
     sandik,
     choices=choices,
+    available_choices=available_choices,
     metadata_columns=_metadata_columns_for_level(level, columns=columns),
   )
   aggregated = _aggregate(frame, GROUP_KEYS[level])
@@ -556,6 +563,7 @@ def _wide_rows(
   dataset: xr.Dataset,
   *,
   choices: list[str] | None,
+  available_choices: set[str] | None,
   metadata_columns: Sequence[str],
 ) -> pd.DataFrame:
   oy = dataset.oy
@@ -573,11 +581,27 @@ def _wide_rows(
 
   votes = oy.to_pandas()
   votes.columns = choice_names
-  votes = votes.dropna(axis=1, how="all").fillna(0).reset_index(drop=True)
+  votes = votes.dropna(axis=1, how="all")
+  if available_choices is not None:
+    votes = votes.loc[:, votes.columns.astype(str).isin(available_choices)]
+  elif choices is None:
+    votes = votes.loc[:, votes.fillna(0).ne(0).any(axis=0)]
+  votes = votes.fillna(0).reset_index(drop=True)
 
   meta = _metadata_frame(dataset, index=votes.index, columns=metadata_columns)
   frame = pd.concat([meta, votes], axis=1)
   return _clean_locations(frame)
+
+
+def _available_vote_choices(dataset: xr.Dataset) -> set[str]:
+  sandik = dataset.sel(yer_turu="sandik") if "yer_turu" in dataset.xindexes else dataset
+  totals = sandik.oy.sum(dim=[dim for dim in sandik.oy.dims if dim != "tercih_dim"])
+  choice_names = sandik.tercih.to_numpy()
+  nonzero = np.asarray(totals.to_numpy()) != 0
+  if "tercih_turu" in sandik:
+    choice_types = pd.Series(sandik.tercih_turu.to_numpy(), dtype="string")
+    nonzero |= choice_types.eq("independent").to_numpy()
+  return {str(choice) for choice in choice_names[nonzero] if pd.notna(choice)}
 
 
 def _metadata_columns_for_level(

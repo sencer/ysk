@@ -170,6 +170,24 @@ def test_choices_accept_display_names() -> None:
   assert {"chp", "ak_parti"}.issubset(data.columns)
 
 
+def test_multi_office_results_exclude_absent_choice_columns() -> None:
+  data = election_results(
+    Secim.GENEL_2023,
+    [Makam.MILLETVEKILI, Makam.CUMHURBASKANI],
+    province="IGDIR",
+    level="ilce",
+  )
+  cb = data.xs("CB", axis=1, level="makam")
+
+  assert "ak_parti" not in cb.columns
+  assert {
+    "kemal_kilicdaroglu",
+    "muharrem_ince",
+    "recep_tayyip_erdogan",
+    "sinan_ogan",
+  }.issubset(cb.columns)
+
+
 def test_election_results_columns_filters_output_columns() -> None:
   full = election_results(
     Secim.YEREL_2024,
