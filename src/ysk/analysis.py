@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from enum import IntFlag, StrEnum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -184,17 +184,22 @@ def load_demographics(path: Path | str | None = None) -> xr.Dataset | None:
     return None
 
 
+SELECTION_INDEX_COORDS = ("secim", "makam", "yer_turu", "il")
+
+
 def _with_selection_index(dataset: xr.Dataset) -> xr.Dataset:
-  index_coords = [
-    name
-    for name in ("secim", "makam")
-    if name in dataset.coords and len(dataset[name].dims) == 1
-  ]
-  if not index_coords:
-    return dataset
-  if any(name in dataset.xindexes for name in index_coords):
-    return dataset
-  return set_xindex(dataset, index_coords)
+  coords_by_dim: dict[Hashable, list[str]] = {}
+  for name in SELECTION_INDEX_COORDS:
+    if name in dataset.coords and len(dataset[name].dims) == 1:
+      coords_by_dim.setdefault(dataset[name].dims[0], []).append(name)
+
+  for dim, coords in coords_by_dim.items():
+    if all(name in dataset.xindexes for name in coords):
+      continue
+    if dim in dataset.xindexes:
+      dataset = dataset.reset_index(dim)
+    dataset = set_xindex(dataset, coords)
+  return dataset
 
 
 def _isel_1d_coordinate(
