@@ -55,10 +55,14 @@ def test_turkish_constants_include_column_groups() -> None:
 def test_party_color_uses_fixed_party_color_constant() -> None:
   assert PARTI_RENKLERI["ak_parti"] == "#F58220"
   assert PARTI_RENKLERI["chp"] == "#E30613"
-  assert PARTI_RENKLERI["mhp"] == "#1F3A93"
-  assert PARTI_RENKLERI["dem_parti"] == "#7B3294"
-  assert PARTI_RENKLERI["saadet"] == "#2EAD4B"
-  assert PARTI_RENKLERI["yeniden_refah"] == "#006B3F"
+  assert PARTI_RENKLERI["mhp"] == "#000046"
+  assert PARTI_RENKLERI["dem_parti"] == "#74489C"
+  assert PARTI_RENKLERI["refah_partisi"] == "#009400"
+  assert PARTI_RENKLERI["fazilet_partisi"] == "#009400"
+  assert PARTI_RENKLERI["saadet"] == "#009400"
+  assert PARTI_RENKLERI["yeniden_refah"] == "#b1ab06"
+  assert PARTI_RENKLERI["buyuk_birlik"] == "#4242f0"
+  assert PARTI_RENKLERI["zafer_partisi"] == "#155179"
   assert PARTI_RENKLERI.keys() >= PARTILER
   assert party_color("ak_parti") == "#F58220"
   with pytest.raises(KeyError):
