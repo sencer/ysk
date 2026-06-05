@@ -225,6 +225,7 @@ def election_results(  # noqa: PLR0913
   choices: list[str] | None = None,
   columns: Sequence[str] | None = None,
   align_historical_divisions: bool = False,
+  exclude_prison: bool = False,
   demographics: xr.Dataset | None = None,
 ) -> pd.DataFrame:
   """Return election results as a tidy DataFrame at the requested level.
@@ -246,6 +247,7 @@ def election_results(  # noqa: PLR0913
       loaded selectively when possible.
     align_historical_divisions: Whether to align historical district results to
       the latest selected election year.
+    exclude_prison: Whether to exclude ballot boxes marked with ``cezaevi_id``.
     demographics: Optional demographic dataset used for province or district
       aggregates.
 
@@ -276,6 +278,7 @@ def election_results(  # noqa: PLR0913
       choices=choices,
       columns=columns,
       align_historical_divisions=align_historical_divisions,
+      exclude_prison=exclude_prison,
       demographics=demographics,
     )
   selected = dataset.sel(secim=dates[0]).sel(makam=offices[0])
@@ -288,6 +291,8 @@ def election_results(  # noqa: PLR0913
     selected = _select_province(selected, province)
   if district is not None:
     selected = _select_district(selected, district)
+  if exclude_prison:
+    selected = _exclude_prison_boxes(selected)
 
   if level in {"satir", "sandik"}:
     if level == "sandik":
@@ -425,6 +430,14 @@ def _select_district(dataset: xr.Dataset, district: str) -> xr.Dataset:
   return _isel_1d_coordinate(dataset, "ilce", mask.to_numpy())
 
 
+def _exclude_prison_boxes(dataset: xr.Dataset) -> xr.Dataset:
+  if "cezaevi_id" not in dataset:
+    return dataset
+  values = pd.Series(dataset.cezaevi_id.to_numpy(), dtype="string")
+  mask = values.isna() | values.eq("") | values.eq("0")
+  return _isel_1d_coordinate(dataset, "cezaevi_id", mask.to_numpy())
+
+
 def _multi_election_results(  # noqa: PLR0913
   dataset: xr.Dataset,
   *,
@@ -436,6 +449,7 @@ def _multi_election_results(  # noqa: PLR0913
   choices: list[str] | None,
   columns: list[str] | None,
   align_historical_divisions: bool,
+  exclude_prison: bool,
   demographics: xr.Dataset | None,
 ) -> pd.DataFrame:
   frames: list[pd.DataFrame] = []
@@ -458,6 +472,7 @@ def _multi_election_results(  # noqa: PLR0913
         district=district,
         choices=choices,
         columns=columns,
+        exclude_prison=exclude_prison,
         demographics=demographics,
       )
       if align_historical_divisions:
